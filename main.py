@@ -278,26 +278,52 @@ async def check_discord_username(session, semaphore, username, results):
 # ─────────────────────────────────────────────
 
 async def check_discord_username(session, semaphore, username, results):
+    """
+    Mimics Discord's registration page username check.
+    Sends a fake register attempt — if the error is about the username
+    being taken, it's taken. Any other error means the username is free.
+    """
     if not (2 <= len(username) <= 32):
         return
     if not all(c in set(DISCORD_USERNAME_CHARS) for c in username):
         return
-    url     = "https://discord.com/api/v9/unique-username/username-attempt-unauthed"
-    headers = {**HEADERS, "Content-Type": "application/json",
-               "Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
+
+    url = "https://discord.com/api/v9/auth/register"
+    headers = {
+        **HEADERS,
+        "Content-Type": "application/json",
+        "Origin":       "https://discord.com",
+        "Referer":      "https://discord.com/register",
+        "X-Super-Properties": "eyJvcyI6IldpbmRvd3MiLCJicm93c2VyIjoiQ2hyb21lIn0=",
+    }
+    # Fake registration payload — bad email/password so it never actually registers
+    payload = {
+        "username":   username,
+        "email":      f"fake_{username}_xz99@mailinator.com",
+        "password":   "Fake!Pass99xz",
+        "date_of_birth": "1999-01-01",
+        "consent":    True,
+    }
+
     async with semaphore:
         try:
-            async with session.post(url, json={"username": username},
-                                    headers=headers,
+            async with session.post(url, json=payload, headers=headers,
                                     timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                data  = await resp.json()
-                taken = data.get("taken", None)
-                if taken is False:
-                    results.append(("Discord", username, "✅ AVAILABLE"))
-                elif taken is True:
+                data = await resp.json()
+                errors = data.get("errors", {})
+                username_errors = errors.get("username", {})
+                error_list = username_errors.get("_errors", [])
+                codes = [e.get("code", "") for e in error_list]
+
+                if "USERNAME_ALREADY_TAKEN" in codes or "USERNAME_TOO_MANY_USERS" in codes:
                     results.append(("Discord", username, "❌ taken"))
+                elif error_list:
+                    # Username-specific error but not taken — still taken/invalid
+                    results.append(("Discord", username, f"⚠️  username error: {codes}"))
                 else:
-                    results.append(("Discord", username, f"⚠️  unknown: {data}"))
+                    # No username errors = username itself is free
+                    # (registration failed for other reasons like email/captcha)
+                    results.append(("Discord", username, "✅ AVAILABLE"))
         except Exception as e:
             results.append(("Discord", username, f"💥 error: {e}"))
 
@@ -396,7 +422,7 @@ async def main():
                 check_platform(session, semaphore, name, cfg, username, results)
                 for name, cfg in PLATFORMS.items()
             ]
-            # Discord endpoint is dead — no free public API available
+            tasks.append(check_discord_username(session, semaphore, username, results))
             await asyncio.gather(*tasks)
 
             stats.update(results)
