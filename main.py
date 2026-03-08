@@ -23,6 +23,7 @@ CHANNEL_IDS = {
     "Instagram": 000000000000000000,
     "Twitch":    000000000000000000,
     "Pinterest": 000000000000000000,
+    "Discord":   000000000000000000,
 }
 
 # ─────────────────────────────────────────────
@@ -38,7 +39,8 @@ TOTAL_INSTANCES = 1  # Total machines running in parallel
 
 LENGTHS    = [4, 5]
 DELAY      = 0.3
-CONCURRENT = 10
+CONCURRENT  = 10
+OUTPUT_FILE = f"found_usernames_instance{INSTANCE_ID}.txt"
 
 # ─────────────────────────────────────────────
 #  CHARACTER SETS
@@ -62,6 +64,7 @@ PLATFORM_META = {
     "Instagram": {"color": 0xE1306C, "url": "https://www.instagram.com/{}/",        "emoji": "📸"},
     "Twitch":    {"color": 0x9146FF, "url": "https://www.twitch.tv/{}",             "emoji": "🎮"},
     "Pinterest": {"color": 0xE60023, "url": "https://www.pinterest.com/{}/",        "emoji": "📌"},
+    "Discord":   {"color": 0x5865F2, "url": "https://discord.com/users/{}",          "emoji": "💬"},
 }
 
 # ─────────────────────────────────────────────
@@ -132,6 +135,15 @@ PLATFORMS = {
         "max_len":   30,
     },
 }
+
+# ─────────────────────────────────────────────
+#  DISCORD USERNAME CHECKER (separate — uses API)
+# ─────────────────────────────────────────────
+# Discord allows: letters, numbers, underscores, dots (2–32 chars)
+DISCORD_USERNAME_CHARS = L + U + D + UND + DOT
+
+# Discord allows letters, numbers, underscores, dots (2-32 chars)
+DISCORD_USERNAME_CHARS = L + U + D + UND + DOT
 
 # ─────────────────────────────────────────────
 #  USERNAME GENERATOR
@@ -229,6 +241,67 @@ async def send_discord_embed(session, platform, username):
         print(f"  💥 Discord error: {e}")
 
 # ─────────────────────────────────────────────
+#  DISCORD USERNAME CHECKER
+# ─────────────────────────────────────────────
+
+async def check_discord_username(session, semaphore, username, results):
+    """Check if a Discord username is available using their API."""
+    if not (2 <= len(username) <= 32):
+        return
+    if not all(c in set(DISCORD_USERNAME_CHARS) for c in username):
+        return
+
+    url     = "https://discord.com/api/v9/unique-username/username-attempt-unauthed"
+    headers = {
+        **HEADERS,
+        "Content-Type":  "application/json",
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+    }
+    async with semaphore:
+        try:
+            async with session.post(url, json={"username": username},
+                                    headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                data  = await resp.json()
+                taken = data.get("taken", None)
+                if taken is False:
+                    results.append(("Discord", username, "✅ AVAILABLE"))
+                elif taken is True:
+                    pass  # suppress taken
+                else:
+                    results.append(("Discord", username, f"⚠️  unknown: {data}"))
+        except Exception as e:
+            results.append(("Discord", username, f"💥 error: {e}"))
+
+# ─────────────────────────────────────────────
+#  DISCORD USERNAME CHECKER
+# ─────────────────────────────────────────────
+
+async def check_discord_username(session, semaphore, username, results):
+    if not (2 <= len(username) <= 32):
+        return
+    if not all(c in set(DISCORD_USERNAME_CHARS) for c in username):
+        return
+    url     = "https://discord.com/api/v9/unique-username/username-attempt-unauthed"
+    headers = {**HEADERS, "Content-Type": "application/json",
+               "Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
+    async with semaphore:
+        try:
+            async with session.post(url, json={"username": username},
+                                    headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                data  = await resp.json()
+                taken = data.get("taken", None)
+                if taken is False:
+                    results.append(("Discord", username, "✅ AVAILABLE"))
+                elif taken is True:
+                    results.append(("Discord", username, "❌ taken"))
+                else:
+                    results.append(("Discord", username, f"⚠️  unknown: {data}"))
+        except Exception as e:
+            results.append(("Discord", username, f"💥 error: {e}"))
+
+# ─────────────────────────────────────────────
 #  CHECKER
 # ─────────────────────────────────────────────
 
@@ -246,6 +319,7 @@ async def check_platform(session, semaphore, platform_name, cfg, username, resul
                     results.append((platform_name, username, "✅ AVAILABLE"))
                     return True
                 elif status in cfg["taken"]:
+                    results.append((platform_name, username, f"❌ taken"))
                     return False
                 else:
                     results.append((platform_name, username, f"⚠️  unknown ({status})"))
@@ -318,19 +392,25 @@ async def main():
     async with aiohttp.ClientSession(connector=connector) as session:
         for i, username in enumerate(generate_usernames(LENGTHS), 1):
             results = []
-            tasks   = [
+            tasks = [
                 check_platform(session, semaphore, name, cfg, username, results)
                 for name, cfg in PLATFORMS.items()
             ]
+            tasks.append(check_discord_username(session, semaphore, username, results))
             await asyncio.gather(*tasks)
 
             stats.update(results)
 
             for platform, uname, status in results:
                 ts = datetime.now().strftime("%H:%M:%S")
-                print(f"[{ts}] {platform:<12} @{uname:<10}  {status}")
+                # Print everything for first 3 usernames to debug, then only non-taken
+                if i <= 3 or "taken" not in status:
+                    print(f"[{ts}] {platform:<12} @{uname:<10}  {status}")
                 if "AVAILABLE" in status:
                     await send_discord_embed(session, platform, uname)
+                    # Also save to txt as backup
+                    with open(OUTPUT_FILE, "a") as f:
+                        f.write(f"{platform}: @{uname}\n")
 
             if i % 50 == 0:
                 stats.print_progress()
