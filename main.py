@@ -396,7 +396,7 @@ async def main():
                 check_platform(session, semaphore, name, cfg, username, results)
                 for name, cfg in PLATFORMS.items()
             ]
-            tasks.append(check_discord_username(session, semaphore, username, results))
+            # Discord endpoint is dead — no free public API available
             await asyncio.gather(*tasks)
 
             stats.update(results)
