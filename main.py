@@ -131,16 +131,19 @@ def all_platform_chars():
     return "".join(sorted(chars))
 
 def generate_usernames(lengths):
+    """
+    Lazy generator — yields one username at a time, no RAM blowup.
+    RANDOMIZE is disabled when using a generator (can't shuffle infinite streams).
+    If you want random order, set LENGTHS = [3] or [3, 4] only and it'll
+    collect those into memory safely (much smaller sets).
+    """
     chars = all_platform_chars()
-    names = []
+    index = 0
     for length in lengths:
-        combos = itertools.product(chars, repeat=length)
-        names.extend("".join(c) for c in combos)
-    # Split workload across instances
-    names = [n for i, n in enumerate(names) if i % TOTAL_INSTANCES == INSTANCE_ID]
-    if RANDOMIZE:
-        random.shuffle(names)
-    return names
+        for combo in itertools.product(chars, repeat=length):
+            if index % TOTAL_INSTANCES == INSTANCE_ID:
+                yield "".join(combo)
+            index += 1
 
 def is_valid_for_platform(username, cfg):
     length = len(username)
@@ -300,8 +303,11 @@ async def main():
     print("=" * 60)
 
     usernames = generate_usernames(LENGTHS)
-    stats = Stats(len(usernames))
-    print(f"\n  This instance will check {len(usernames):,} usernames.\n")
+    chars_count = len(all_platform_chars())
+    total_est = sum(chars_count ** l for l in LENGTHS) // TOTAL_INSTANCES
+    stats = Stats(total_est)
+    print(f"\n  Estimated usernames for this instance: ~{total_est:,}\n")
+    print("  Checks are running — only non-taken results shown below.\n")
 
     semaphore = asyncio.Semaphore(CONCURRENT)
     available_buffer = []
