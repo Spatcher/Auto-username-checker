@@ -55,6 +55,10 @@ PLATFORMS = {
         "chars":     L + U + D + UND + DOT + DAS,
         "min_len":   3,
         "max_len":   30,
+        "no_leading_hyphen":  True,
+        "no_trailing_hyphen": True,
+        "no_leading_dot":     True,
+        "no_trailing_dot":    True,
     },
     "TikTok": {
         "url":       "https://www.tiktok.com/@{}",
@@ -63,6 +67,10 @@ PLATFORMS = {
         "chars":     L + U + D + UND + DOT,
         "min_len":   2,
         "max_len":   24,
+        "no_leading_dot":     True,
+        "no_trailing_dot":    True,
+        "no_leading_underscore":  True,
+        "no_trailing_underscore": True,
     },
     "Twitch": {
         "url":       "https://www.twitch.tv/{}",
@@ -79,6 +87,9 @@ PLATFORMS = {
         "chars":     L + U + D + DAS,
         "min_len":   1,
         "max_len":   39,
+        "no_leading_hyphen":  True,
+        "no_trailing_hyphen": True,
+        "no_double_hyphen":   True,
     },
     "Instagram": {
         "url":       "https://www.instagram.com/{}/",
@@ -87,6 +98,9 @@ PLATFORMS = {
         "chars":     L + U + D + UND + DOT,
         "min_len":   1,
         "max_len":   30,
+        "no_leading_dot":     True,
+        "no_trailing_dot":    True,
+        "no_double_dot":      True,
     },
     "Twitter/X": {
         "url":       "https://x.com/{}",
@@ -128,7 +142,11 @@ def all_platform_chars():
     chars = set()
     for p in PLATFORMS.values():
         chars.update(p["chars"])
-    return "".join(sorted(chars))
+    # Put letters first so combos start with real words, not symbols
+    letters = [c for c in chars if c.isalpha()]
+    digits  = [c for c in chars if c.isdigit()]
+    special = [c for c in chars if not c.isalnum()]
+    return "".join(sorted(letters) + sorted(digits) + sorted(special))
 
 def generate_usernames(lengths):
     """
@@ -154,12 +172,18 @@ def is_valid_for_platform(username, cfg):
     allowed = set(cfg["chars"])
     if not all(c in allowed for c in username):
         return False
-    if cfg.get("no_leading_underscore") and username.startswith("_"):
-        return False
-    if cfg.get("no_trailing_underscore") and username.endswith("_"):
-        return False
-    if cfg.get("no_double_underscore") and "__" in username:
-        return False
+    # Underscore rules
+    if cfg.get("no_leading_underscore")  and username.startswith("_"): return False
+    if cfg.get("no_trailing_underscore") and username.endswith("_"):   return False
+    if cfg.get("no_double_underscore")   and "__" in username:         return False
+    # Hyphen rules
+    if cfg.get("no_leading_hyphen")      and username.startswith("-"): return False
+    if cfg.get("no_trailing_hyphen")     and username.endswith("-"):   return False
+    if cfg.get("no_double_hyphen")       and "--" in username:         return False
+    # Dot rules
+    if cfg.get("no_leading_dot")         and username.startswith("."): return False
+    if cfg.get("no_trailing_dot")        and username.endswith("."):   return False
+    if cfg.get("no_double_dot")          and ".." in username:         return False
     return True
 
 # ─────────────────────────────────────────────
